@@ -1,0 +1,339 @@
+openapi: 3.1.0
+info:
+  title: RailFlow Control Plane API
+  version: 1.0.0
+  description: >
+    High-throughput reservation and inventory control plane for Indian Railways PRS.
+    Engineered for the extreme write-contention Tatkal burst (1,000,000 concurrent users at t=0).
+paths:
+  /api/v1/stations:
+    get:
+      summary: Station autocomplete
+      operationId: searchStations
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "new del"
+      responses:
+        '200':
+          description: Station matches with sub-50ms latency
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StationDto'
+
+  /api/v1/trains/search:
+    get:
+      summary: Multi-quota train and availability search
+      operationId: searchTrains
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "NDLS"
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            example: "BCT"
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+            example: "2026-10-22"
+        - name: class
+          in: query
+          schema:
+            type: string
+            example: "3A"
+        - name: quota
+          in: query
+          schema:
+            type: string
+            example: "TQ"
+      responses:
+        '200':
+          description: Train schedules joined against bounded-staleness availability read model
+          headers:
+            as_of:
+              schema:
+                type: string
+            staleness_ms:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TrainSearchResultDto'
+
+  /api/v1/intents:
+    post:
+      summary: Pre-register booking intent (T-5 min pre-Tatkal)
+      operationId: createIntent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIntentRequest'
+      responses:
+        '201':
+          description: Pre-signed 180-byte intent token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IntentTokenResponse'
+
+  /api/v1/bookings:
+    post:
+      summary: Submit reservation attempt (or redeem Tatkal intent)
+      operationId: submitBooking
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BookingSubmitRequest'
+      responses:
+        '201':
+          description: Berths held (soft-lock issued, awaiting payment)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BookingHoldResponse'
+        '202':
+          description: Queued in the 2000ms VRF fair lottery window
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VirtualQueueResponse'
+        '409':
+          description: Quota sold out (rejected at edge in <5ms)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+
+  /api/v1/bookings/{id}/confirm:
+    post:
+      summary: Confirm reservation after payment capture
+      operationId: confirmBooking
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Booking confirmed and PNR issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmedTicketResponse'
+
+  /api/v1/pnr/{pnr}:
+    get:
+      summary: PNR status inquiry
+      operationId: getPnrStatus
+      parameters:
+        - name: pnr
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9]{10}$'
+      responses:
+        '200':
+          description: Current booking and coach status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PnrStatusResponse'
+
+components:
+  schemas:
+    StationDto:
+      type: object
+      required: [stationCode, name, state]
+      properties:
+        stationCode: { type: string }
+        name: { type: string }
+        state: { type: string }
+        latitude: { type: number }
+        longitude: { type: number }
+
+    TrainSearchResultDto:
+      type: object
+      required: [trainNumber, trainName, departureTime, arrivalTime, availability]
+      properties:
+        trainNumber: { type: string }
+        trainName: { type: string }
+        fromStation: { type: string }
+        toStation: { type: string }
+        departureTime: { type: string }
+        arrivalTime: { type: string }
+        duration: { type: string }
+        availability:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClassAvailabilityDto'
+
+    ClassAvailabilityDto:
+      type: object
+      required: [classCode, quotaCode, status, fare]
+      properties:
+        classCode: { type: string }
+        quotaCode: { type: string }
+        status: { type: string, example: "AVAILABLE-42" }
+        availableCount: { type: integer }
+        fare: { type: number }
+        confidence: { type: string, enum: [authoritative, projected, degraded] }
+
+    CreateIntentRequest:
+      type: object
+      required: [trainNumber, journeyDate, classCode, quotaCode, fromStation, toStation, passengers]
+      properties:
+        trainNumber: { type: string }
+        journeyDate: { type: string, format: date }
+        classCode: { type: string }
+        quotaCode: { type: string }
+        fromStation: { type: string }
+        toStation: { type: string }
+        passengers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PassengerInputDto'
+
+    PassengerInputDto:
+      type: object
+      required: [name, age, gender]
+      properties:
+        name: { type: string }
+        age: { type: integer }
+        gender: { type: string, enum: ["M", "F", "T"] }
+        berthPreference: { type: string, enum: [LB, MB, UB, SL, SU] }
+
+    IntentTokenResponse:
+      type: object
+      required: [intentId, intentToken, expiresAt, signature]
+      properties:
+        intentId: { type: string }
+        intentToken: { type: string }
+        expiresAt: { type: string, format: date-time }
+        signature: { type: string }
+
+    BookingSubmitRequest:
+      type: object
+      properties:
+        intentToken: { type: string }
+        trainNumber: { type: string }
+        journeyDate: { type: string, format: date }
+        classCode: { type: string }
+        quotaCode: { type: string }
+        fromStation: { type: string }
+        toStation: { type: string }
+        passengers:
+          type: array
+          items:
+            $ref: '#/components/schemas/PassengerInputDto'
+
+    BookingHoldResponse:
+      type: object
+      required: [bookingId, status, expiresAt, totalFare, paymentIntentSecret]
+      properties:
+        bookingId: { type: string, format: uuid }
+        status: { type: string, example: "HELD" }
+        expiresAt: { type: string, format: date-time }
+        totalFare: { type: number }
+        paymentIntentSecret: { type: string }
+
+    VirtualQueueResponse:
+      type: object
+      required: [queueId, position, estimatedWaitSeconds, sseStreamUrl]
+      properties:
+        queueId: { type: string }
+        position: { type: integer }
+        estimatedWaitSeconds: { type: number }
+        sseStreamUrl: { type: string }
+
+    ConfirmedTicketResponse:
+      type: object
+      required: [bookingId, pnr, trainNumber, journeyDate, status, passengers]
+      properties:
+        bookingId: { type: string, format: uuid }
+        pnr: { type: string }
+        trainNumber: { type: string }
+        journeyDate: { type: string, format: date }
+        status: { type: string, example: "CONFIRMED" }
+        passengers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocatedPassengerDto'
+
+    AllocatedPassengerDto:
+      type: object
+      required: [passengerId, name, coach, berthNumber, berthType, currentStatus]
+      properties:
+        passengerId: { type: string, format: uuid }
+        name: { type: string }
+        coach: { type: string }
+        berthNumber: { type: integer }
+        berthType: { type: string }
+        currentStatus: { type: string }
+
+    PnrStatusResponse:
+      type: object
+      required: [pnr, trainNumber, trainName, journeyDate, bookingStatus, chartStatus, passengers]
+      properties:
+        pnr: { type: string }
+        trainNumber: { type: string }
+        trainName: { type: string }
+        journeyDate: { type: string }
+        fromStation: { type: string }
+        toStation: { type: string }
+        bookingStatus: { type: string }
+        chartStatus: { type: string, enum: [CHART_NOT_PREPARED, CHART_PREPARED] }
+        passengers:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocatedPassengerDto'
+
+    ProblemDetail:
+      type: object
+      required: [type, title, status, code, detail, traceId]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        code: { type: string }
+        detail: { type: string }
+        traceId: { type: string }
+        retryAfterMs: { type: integer }
+        alternatives:
+          type: array
+          items: { type: string }

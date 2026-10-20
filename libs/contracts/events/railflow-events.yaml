@@ -1,0 +1,49 @@
+asyncapi: 2.6.0
+info:
+  title: RailFlow Distributed Event Bus Contracts
+  version: 1.0.0
+  description: Canonical event catalogue and topic semantics for RailFlow.
+channels:
+  inventory.commands.v1:
+    description: Partitioned single-writer command log keyed by {train_number}:{journey_date}.
+    publish:
+      message:
+        name: InventoryCommandMessage
+        payload:
+          type: object
+          properties:
+            eventId: { type: string }
+            eventType: { type: string }
+            partitionKey: { type: string }
+
+  inventory.events.v1:
+    description: Authoritative allocation outcomes published by inventory actors.
+    subscribe:
+      message:
+        name: InventoryEventMessage
+        payload:
+          type: object
+
+  booking.events.v1:
+    description: Saga lifecycle events published via Transactional Outbox.
+    subscribe:
+      message:
+        name: BookingEventMessage
+        payload:
+          type: object
+
+  payment.events.v1:
+    description: PSP payment captures, refunds, and reconciliation sweeps.
+    subscribe:
+      message:
+        name: PaymentEventMessage
+        payload:
+          type: object
+
+  waitlist.events.v1:
+    description: RAC and Waitlist promotion cascade events.
+    subscribe:
+      message:
+        name: WaitlistEventMessage
+        payload:
+          type: object

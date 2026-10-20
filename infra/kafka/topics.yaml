@@ -1,0 +1,40 @@
+version: 1
+topics:
+  - name: inventory.commands.v1
+    partitions: 256
+    replicationFactor: 1
+    configs:
+      cleanup.policy: delete
+      retention.ms: 604800000 # 7 days
+      min.insync.replicas: 1
+
+  - name: inventory.events.v1
+    partitions: 256
+    replicationFactor: 1
+    configs:
+      cleanup.policy: delete
+      retention.ms: 604800000 # 7 days
+
+  - name: booking.events.v1
+    partitions: 64
+    replicationFactor: 1
+    configs:
+      retention.ms: 2592000000 # 30 days
+
+  - name: payment.events.v1
+    partitions: 32
+    replicationFactor: 1
+    configs:
+      retention.ms: 2592000000 # 30 days
+
+  - name: waitlist.events.v1
+    partitions: 64
+    replicationFactor: 1
+    configs:
+      retention.ms: 604800000 # 7 days
+
+  - name: audit.events.v1
+    partitions: 32
+    replicationFactor: 1
+    configs:
+      retention.ms: -1 # Infinite tiered storage

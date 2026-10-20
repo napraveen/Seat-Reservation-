@@ -1,0 +1,207 @@
+version: '3.8'
+
+services:
+  # =========================================================================
+  # CORE PROFILE (Total Memory ~5.6 GB)
+  # =========================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: railflow-postgres
+    profiles: [core, full]
+    environment:
+      POSTGRES_DB: railflow
+      POSTGRES_USER: railflow
+      POSTGRES_PASSWORD: railflow_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/flyway:/docker-entrypoint-initdb.d
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U railflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  valkey:
+    image: valkey/valkey:7-alpine
+    container_name: railflow-valkey
+    profiles: [core, full]
+    ports:
+      - "6379:6379"
+    command: valkey-server --maxmemory 200mb --maxmemory-policy allkeys-lru --save ""
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.1.2
+    container_name: railflow-redpanda
+    profiles: [core, full]
+    command:
+      - redpanda start
+      - --smp 1
+      - --memory 1G
+      - --reserve-memory 0M
+      - --overprovisioned
+      - --node-id 0
+      - --kafka-addr PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:29092
+      - --advertise-kafka-addr PLAINTEXT://redpanda:9092,OUTSIDE://localhost:29092
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+      - "9644:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:RELEASE.2024-05-10T01-41-38Z-cpuv1
+    container_name: railflow-minio
+    profiles: [core, full]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mock-psp:
+    image: wiremock/wiremock:3.6.0-alpine
+    container_name: railflow-mock-psp
+    profiles: [core, full]
+    ports:
+      - "8089:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  # =========================================================================
+  # OBSERVABILITY PROFILE (Total Memory ~1.5 GB)
+  # =========================================================================
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    container_name: railflow-otel
+    profiles: [obs, full]
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./infra/otel/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: railflow-prometheus
+    profiles: [obs, full]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/prometheus/rules:/etc/prometheus/rules
+    ports:
+      - "9090:9090"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: railflow-grafana
+    profiles: [obs, full]
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  tempo:
+    image: grafana/tempo:2.4.1
+    container_name: railflow-tempo
+    profiles: [obs, full]
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/tempo/tempo.yaml:/etc/tempo.yaml
+    ports:
+      - "3200:3200"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: railflow-loki
+    profiles: [obs, full]
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+  # =========================================================================
+  # CHAOS PROFILE
+  # =========================================================================
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    container_name: railflow-toxiproxy
+    profiles: [chaos, full]
+    ports:
+      - "8474:8474"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+volumes:
+  postgres-data:
+  redpanda-data:
+  minio-data:

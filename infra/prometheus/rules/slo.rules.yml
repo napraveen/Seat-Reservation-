@@ -1,0 +1,62 @@
+groups:
+  - name: railflow_slo_recording_rules
+    rules:
+      - record: job:railflow_availability_requests:rate5m
+        expr: sum(rate(http_server_requests_seconds_count{uri=~"/api/v1/trains/.*"}[5m]))
+
+      - record: job:railflow_booking_requests:rate5m
+        expr: sum(rate(http_server_requests_seconds_count{uri=~"/api/v1/bookings.*"}[5m]))
+
+      - record: job:railflow_booking_errors:rate5m
+        expr: sum(rate(http_server_requests_seconds_count{uri=~"/api/v1/bookings.*",status=~"5.."}[5m]))
+
+      - record: job:railflow_booking_error_ratio:5m
+        expr: >
+          job:railflow_booking_errors:rate5m
+          /
+          clamp_min(job:railflow_booking_requests:rate5m, 1)
+
+      - record: job:railflow_p99_latency:5m
+        expr: histogram_quantile(0.99, sum(rate(http_server_requests_seconds_bucket[5m])) by (le))
+
+  - name: railflow_slo_burn_rate_alerts
+    rules:
+      - alert: RailFlowCriticalErrorBudgetBurnRateP0
+        expr: job:railflow_booking_error_ratio:5m > (14.4 * 0.0005)
+        for: 2m
+        labels:
+          severity: critical
+          tier: P0
+        annotations:
+          summary: "Critical 14.4x error budget burn rate active (2% budget burned in 1 hour)"
+          runbook_url: "docs/11-SRE-RUNBOOK.md#playbook-1"
+
+      - alert: RailFlowHighErrorBudgetBurnRateP1
+        expr: job:railflow_booking_error_ratio:5m > (6.0 * 0.0005)
+        for: 15m
+        labels:
+          severity: warning
+          tier: P1
+        annotations:
+          summary: "High 6.0x error budget burn rate active (5% budget burned in 6 hours)"
+          runbook_url: "docs/11-SRE-RUNBOOK.md#playbook-2"
+
+      - alert: RailFlowPhysicalBerthOversellDetected
+        expr: railflow_oversell_total > 0
+        for: 0s
+        labels:
+          severity: page
+          tier: P0
+        annotations:
+          summary: "FATAL INVARIANT BREACH: Physical berth oversell counter is non-zero!"
+          runbook_url: "docs/11-SRE-RUNBOOK.md#playbook-1"
+
+      - alert: RailFlowFinancialTicketDivergence
+        expr: railflow_payment_ticket_divergence > 0
+        for: 15m
+        labels:
+          severity: critical
+          tier: P1
+        annotations:
+          summary: "Unreconciled payment-ticket divergence persisted for > 15 minutes"
+          runbook_url: "docs/11-SRE-RUNBOOK.md#playbook-2"

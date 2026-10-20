@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Subproject build dirs
+*/build/
+*/*/build/
+
+# Node / Web
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Logs
+*.log
