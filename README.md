@@ -188,7 +188,7 @@ Measured on AMD Ryzen / Intel Core i7:
 ```bash
 make chaos
 ```
-Executes all 14 fault-injection experiments from [`docs/13-CHAOS-REPORT.md`](file:///f:/2026%20-%20Projects/Railway%20Seat%20Reservation/docs/13-CHAOS-REPORT.md) (broker kills, network splits, Redis crash, clock skew, orphan payment race) and verifies domain invariants.
+Executes all 14 fault-injection experiments from [`docs/13-CHAOS-REPORT.md`](file:///f:/2026%20-%20Projects/Railway%20Seat%20Reservation/docs/13-CHAOS-REPORT.md) (broker kills, network splits, Redis crash,clock skew, orphan payment race) and verifies domain invariants.
 
 ---
 
